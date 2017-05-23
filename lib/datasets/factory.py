@@ -19,6 +19,8 @@ from .nthu import nthu
 from .coco import coco
 from .kittivoc import kittivoc
 
+from .davis import davis
+
 def _selective_search_IJCV_top_k(split, year, top_k):
     """Return an imdb that uses the top k proposals from the selective search
     IJCV code.
@@ -27,6 +29,15 @@ def _selective_search_IJCV_top_k(split, year, top_k):
     imdb.roidb_handler = imdb.selective_search_IJCV_roidb
     imdb.config['top_k'] = top_k
     return imdb
+
+#set up DAVIS
+for year in ['2017']:
+    for split in ['train', 'val', 'test-dev']:
+        name = 'DAVIS-{}-{}'.format(year, split)
+        print("Adding {}".format(name))
+        __sets[name] = (lambda split=split, year=year:
+                    davis(split, year))
+
 
 # Set up voc_<year>_<split> using selective search "fast" mode
 for year in ['2007', '2012', '0712']:
