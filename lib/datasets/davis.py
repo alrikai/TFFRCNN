@@ -33,7 +33,6 @@ import pdb
 
 class davis(imdb):
     def __init__(self, image_set, year, devkit_path=None):
-        pdb.set_trace()
         imdb.__init__(self, 'davis_' + image_set)
         self._image_set = image_set
         self._devkit_path = self._get_default_path() if devkit_path is None \
@@ -44,10 +43,12 @@ class davis(imdb):
         self._image_ext = '.jpg'
         self._image_index = self._load_image_set_index()
 
-        #self._remove_empty_samples()
-        #self._classes = ('__background__', # always index 0
-        #                 'pedestrian', 'car', 'cyclist')
-        #self._class_to_ind = dict(zip(self.classes, xrange(self.num_classes)))
+        #TODO: need to figure out how to handle the classes. Do we want this to be
+        #unique to the different segments, and if so, how we do we do the hold-out
+        #data segments? They will have overlapping annotation labels as well. Is
+        #this really the best way to do it?
+        self._classes = ('__background__', '__object__')
+        self._class_to_ind = dict(zip(self.classes, xrange(self.num_classes)))
 
         # Default to roidb handler
         #self._roidb_handler = self.selective_search_roidb
@@ -111,11 +112,11 @@ class davis(imdb):
         This function loads/saves from/to a cache file to speed up future calls.
         """
         cache_file = os.path.join(self.cache_path, self.name + '_gt_roidb.pkl')
-        if os.path.exists(cache_file):
-            with open(cache_file, 'rb') as fid:
-                roidb = cPickle.load(fid)
-            print '{} gt roidb loaded from {}'.format(self.name, cache_file)
-            return roidb
+        #if os.path.exists(cache_file):
+        #    with open(cache_file, 'rb') as fid:
+        #        roidb = cPickle.load(fid)
+        #    print '{} gt roidb loaded from {}'.format(self.name, cache_file)
+        #    return roidb
 
         gt_roidb = [self._load_davis_annotation(index)
                     for index in self.image_index]
@@ -194,29 +195,9 @@ class davis(imdb):
 
         return self.create_roidb_from_box_list(box_list, gt_roidb)
 
-    def _remove_empty_samples(self):
-        """
-        Remove images with zero annotation ()
-        """
-        print 'Remove empty annotations: ',
-        for i in range(len(self._image_index)-1, -1, -1):
-            index = self._image_index[i]
-            filename = os.path.join(self._data_path, 'Annotations', index + '.xml')
-            tree = ET.parse(filename)
-            objs = tree.findall('object')
-            non_diff_objs = [
-                obj for obj in objs if \
-                    int(obj.find('difficult').text) == 0 and obj.find('name').text.lower().strip() != 'dontcare']
-            num_objs = len(non_diff_objs)
-            if num_objs == 0:
-                print index,
-                self._image_index.pop(i)
-        print 'Done. '
-
     def _load_davis_annotation(self, index):
-        pdb.set_trace()
         gt_filename = os.path.join(self._data_path, 'Annotations', index + self._mask_ext)
-        gt_mask = PIL.Image.open(gt_filename)
+        gt_mask = np.asarray(PIL.Image.open(gt_filename))
         image_labels = np.sort(np.unique(gt_mask))
 
         #dont take the background
@@ -235,10 +216,12 @@ class davis(imdb):
             c_min = float(np.min(obj_idxs[1]))
             c_max = float(np.max(obj_idxs[1]))
 
+            #assumes we are doing binary classification
+            cls = self._class_to_ind['__object__']
             #TODO: figure out if the convention is (r, c, r, c) or {c, r, c, r)
-            boxes[idx, :] = [r_min, c_min, r_max, c_max]
-            gt_classes[idx] = label
-            overlaps[idx, label] = 1.0
+            boxes[idx, :] = [c_min, r_min, c_max, r_max]
+            gt_classes[idx] = cls
+            overlaps[idx, cls] = 1.0
             seg_areas[idx] = (c_max - c_min + 1) * (r_max - r_min + 1)
 
         overlaps = scipy.sparse.csr_matrix(overlaps)
@@ -248,83 +231,10 @@ class davis(imdb):
                 'flipped' : False,
                 'seg_areas' : seg_areas}
 
+#-------------------------------------------------------------------------------
 
-
-
-
-
-    def _load_pascal_annotation(self, index):
-        """
-        Load image and bounding boxes info from XML file in the PASCAL VOC
-        format.
-        """
-        pdb.set_trace()
-        filename = os.path.join(self._data_path, 'Annotations', index + '.xml')
-        tree = ET.parse(filename)
-        objs = tree.findall('object')
-        # if not self.config['use_diff']:
-        #     # Exclude the samples labeled as difficult
-        #     non_diff_objs = [
-        #         obj for obj in objs if int(obj.find('difficult').text) == 0]
-        #     objs = non_diff_objs
-        num_objs = len(objs)
-
-        boxes = np.zeros((num_objs, 4), dtype=np.int32)
-        gt_classes = np.zeros((num_objs), dtype=np.int32)
-        # just the same as gt_classes
-        overlaps = np.zeros((num_objs, self.num_classes), dtype=np.float32)
-        # "Seg" area for pascal is just the box area
-        seg_areas = np.zeros((num_objs), dtype=np.float32)
-
-        ishards = np.zeros((num_objs), dtype=np.int32)
-        care_inds = np.empty((0), dtype=np.int32)
-        dontcare_inds = np.empty((0), dtype=np.int32)
-
-        # Load object bounding boxes into a data frame.
-        for ix, obj in enumerate(objs):
-            bbox = obj.find('bndbox')
-            # Make pixel indexes 0-based
-            x1 = max(float(bbox.find('xmin').text) - 1, 0)
-            y1 = max(float(bbox.find('ymin').text) - 1, 0)
-            x2 = float(bbox.find('xmax').text) - 1
-            y2 = float(bbox.find('ymax').text) - 1
-
-            diffc = obj.find('difficult')
-            difficult = 0 if diffc == None else int(diffc.text)
-            ishards[ix] = difficult
-
-            class_name = obj.find('name').text.lower().strip()
-            if class_name != 'dontcare':
-                care_inds = np.append(care_inds, np.asarray([ix], dtype=np.int32))
-            if class_name == 'dontcare':
-                dontcare_inds = np.append(dontcare_inds, np.asarray([ix], dtype=np.int32))
-                boxes[ix, :] = [x1, y1, x2, y2]
-                continue
-            cls = self._class_to_ind[class_name]
-            boxes[ix, :] = [x1, y1, x2, y2]
-            gt_classes[ix] = cls
-            overlaps[ix, cls] = 1.0
-            seg_areas[ix] = (x2 - x1 + 1) * (y2 - y1 + 1)
-
-        # deal with dontcare areas
-        dontcare_areas = boxes[dontcare_inds, :]
-        boxes = boxes[care_inds, :]
-        gt_classes = gt_classes[care_inds]
-        overlaps = overlaps[care_inds, :]
-        seg_areas = seg_areas[care_inds]
-        ishards = ishards[care_inds]
-
-        overlaps = scipy.sparse.csr_matrix(overlaps)
-
-        return {'boxes' : boxes,
-                'gt_classes': gt_classes,
-                'gt_ishard' : ishards,
-                'dontcare_areas' : dontcare_areas,
-                'gt_overlaps' : overlaps,
-                'flipped' : False,
-                'seg_areas' : seg_areas}
-
-    def _write_voc_results_file(self, all_boxes):
+    #since this is just going to be a step in the pipeline, just output the bounding boxes for now
+    def _write_davis_results_file(self, all_boxes):
         for cls_ind, cls in enumerate(self.classes):
             if cls == '__background__':
                 continue
@@ -399,7 +309,7 @@ class davis(imdb):
 
 
     def evaluate_detections(self, all_boxes, output_dir):
-        self._write_voc_results_file(all_boxes)
+        self._write_davis_results_file(all_boxes)
         self._do_python_eval(output_dir)
         if self.config['matlab_eval']:
             self._do_matlab_eval(output_dir)
