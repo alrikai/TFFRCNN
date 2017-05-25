@@ -42,6 +42,7 @@ class davis(imdb):
         self._mask_ext = '.png'
         self._image_ext = '.jpg'
         self._image_index = self._load_image_set_index()
+        self._remove_empty_samples()
 
         #TODO: need to figure out how to handle the classes. Do we want this to be
         #unique to the different segments, and if so, how we do we do the hold-out
@@ -96,6 +97,44 @@ class davis(imdb):
             #remove the full path, cut off the leading /, cut off the image extension
             image_index.extend([img_fname.replace(image_fpath, '')[1:-4] for img_fname in image_fnames])
         return image_index
+
+    def _remove_empty_samples(self):
+        """
+        Remove images with zero annotation ()
+        """
+        print 'Remove empty annotations: ',
+        for i in range(len(self._image_index)-1, -1, -1):
+            index = self._image_index[i]
+            gt_filename = os.path.join(self._data_path, 'Annotations', index + self._mask_ext)
+
+            #NOTE: not sure if it's just me, but bmx-bumps annotations for frame
+            #60, 62-74 are corrupted. For now, skip them. --> seems to be fine
+            #elsewhere, but are empty annotations
+            #if index.split('/')[1] == 'bmx-bumps':
+            #    badframes = [str(fnum).zfill(5) for fnum in range(60,75)]
+            #    if index.split('/')[2] in badframes:
+            #        self._image_index.pop(i)
+            #        continue
+            #elif index.split('/')[1] == 'scooter-board':
+            #    #40-45, 66-75 are bad
+            #    badframes = [str(fnum).zfill(5) for fnum in range(40,46)] + [str(fnum).zfill(5) for fnum in range(66,76)]
+            #    if index.split('/')[2] in badframes:
+            #        self._image_index.pop(i)
+            #        continue
+            #elif index.split('/')[1] == 'surf':
+            #    #54 is bad
+            #    badframes = ['00054']
+            #    if index.split('/')[2] in badframes:
+            #        self._image_index.pop(i)
+            #        continue
+
+            gt_mask = np.asarray(PIL.Image.open(gt_filename))
+            mask_empty = np.sum(gt_mask) == 0
+            if mask_empty == 0:
+                print index,
+                self._image_index.pop(i)
+        print 'Done. '
+
 
     def _get_default_path(self):
         """
